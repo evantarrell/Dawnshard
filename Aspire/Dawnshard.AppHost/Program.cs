@@ -27,7 +27,30 @@ IResourceBuilder<ProjectResource> dragaliaApi = builder
     .AddProject<Projects.DragaliaAPI>("dragalia-api")
     .WithReference(postgres)
     .WithReference(redis)
-    .WithEndpoint("http", http => http.TargetHost = "0.0.0.0")
+    .WaitFor(postgres)
+    .WaitFor(redis)
+    // Fixed, unproxied port so the Caddy container can reach it; Caddy serves port 80.
+    .WithEndpoint(
+        "http",
+        http =>
+        {
+            http.TargetHost = "0.0.0.0";
+            http.Port = ApiPort;
+            http.TargetPort = ApiPort;
+            http.IsProxied = false;
+        }
+    )
+    .WithExternalHttpEndpoints();
+
+// Front proxy on port 80 for the game client and website, as in the wiki's
+// "Advanced deployment" guide. See Caddyfile.
+builder
+    .AddContainer("caddy", "caddy", "2")
+    .WithBindMount("Caddyfile", "/etc/caddy/Caddyfile", isReadOnly: true)
+    .WithEnvironment("DAWNSHARD_API", "host.docker.internal:" + ApiPort)
+    .WithEnvironment("DAWNSHARD_WEBSITE", "host.docker.internal:" + WebsitePort)
+    .WithHttpEndpoint(port: 80, targetPort: 80, isProxied: false)
+    .WithEndpoint("http", http => http.TargetHost = "0.0.0.0") // reachable from other devices
     .WithExternalHttpEndpoints();
 
 if (builder.Configuration.GetValue<bool>("EnablePhoton"))
@@ -112,7 +135,15 @@ if (builder.Configuration.GetValue<bool>("EnableWebsite"))
         .AddNpmApp("website", workingDirectory: "../../Website", scriptName: "dev")
         .WithEnvironment("PUBLIC_ENABLE_MSW", "false")
         .WithEnvironment("DAWNSHARD_API_URL_SSR", dragaliaApi.GetEndpoint("http"))
-        .WithHttpEndpoint(null, 3001, "http");
+        // Requests through Caddy keep the Host header, e.g. <this machine>.local
+        .WithEnvironment("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", ".local")
+        .WithHttpEndpoint(null, WebsitePort, "http");
 }
 
 builder.Build().Run();
+
+internal static partial class Program
+{
+    private const int ApiPort = 5080;
+    private const int WebsitePort = 3001;
+}

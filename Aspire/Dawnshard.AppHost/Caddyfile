@@ -1,0 +1,16 @@
+# Front proxy for local development, as in the wiki's "Advanced deployment"
+# guide: the game, the website and the website's API all share port 80.
+# Upstreams come from the AppHost (Program.cs).
+:80 {
+	# Block external access to healthchecks
+	respond /health 404
+	respond /ping 404
+	respond /metrics 404
+
+	reverse_proxy /api/*                   {$DAWNSHARD_API} # Website API
+	reverse_proxy /2.19.0_20220714193707/* {$DAWNSHARD_API} # Android
+	reverse_proxy /2.19.0_20220719103923/* {$DAWNSHARD_API} # iOS
+	reverse_proxy /dragalipatch/config     {$DAWNSHARD_API} # Dragalipatch
+
+	reverse_proxy {$DAWNSHARD_WEBSITE} # Any other traffic not matching the above goes to the website
+}
