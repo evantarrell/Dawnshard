@@ -42,6 +42,24 @@ IResourceBuilder<ProjectResource> dragaliaApi = builder
     )
     .WithExternalHttpEndpoints();
 
+// A self-hosted BaaS instead of baas.lukefz.xyz, e.g. --LocalBaasUrl=http://<this machine>.local:8091.
+// Its tokens are issued as "Halidom", and plain http needs RequireHttpsMetadata off.
+string? localBaasUrl = builder.Configuration["LocalBaasUrl"];
+if (!string.IsNullOrEmpty(localBaasUrl))
+{
+    dragaliaApi = dragaliaApi
+        .WithEnvironment("Baas__BaasUrl", localBaasUrl)
+        .WithEnvironment("Baas__TokenIssuer", "Halidom");
+    foreach (string scheme in new[] { "GameJwt", "WebJwt" })
+    {
+        string section = $"Authentication__Schemes__{scheme}__";
+        dragaliaApi = dragaliaApi
+            .WithEnvironment(section + "RequireHttpsMetadata", "false")
+            .WithEnvironment(section + "ValidIssuer", "Halidom")
+            .WithEnvironment(section + "ValidAudience", "baas-Id");
+    }
+}
+
 // Front proxy on port 80 for the game client and website, as in the wiki's
 // "Advanced deployment" guide. See Caddyfile.
 builder
@@ -131,13 +149,16 @@ if (builder.Configuration.GetValue<bool>("EnablePhoton"))
 
 if (builder.Configuration.GetValue<bool>("EnableWebsite"))
 {
-    builder
+    IResourceBuilder<NodeAppResource> website = builder
         .AddNpmApp("website", workingDirectory: "../../Website", scriptName: "dev")
         .WithEnvironment("PUBLIC_ENABLE_MSW", "false")
         .WithEnvironment("DAWNSHARD_API_URL_SSR", dragaliaApi.GetEndpoint("http"))
         // Requests through Caddy keep the Host header, e.g. <this machine>.local
         .WithEnvironment("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", ".local")
         .WithHttpEndpoint(null, WebsitePort, "http");
+
+    if (!string.IsNullOrEmpty(localBaasUrl))
+        website.WithEnvironment("PUBLIC_BAAS_URL", localBaasUrl);
 }
 
 builder.Build().Run();
